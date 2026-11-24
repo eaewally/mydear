@@ -77,7 +77,8 @@ body.open .hot{pointer-events:none}
 /* 🐉 DRAGÕEZINHOS */
 #dragons{position:fixed; inset:0; z-index:6; pointer-events:none; overflow:hidden; transition:opacity .5s}
 body.open #dragons,body.open .bub,body.open #fire,body.open #glit,body.open #phrase{opacity:0; pointer-events:none}
-.dragon{position:absolute; left:0; top:0; width:clamp(170px,30vmin,360px); padding:0; border:0; background:none; cursor:pointer; pointer-events:auto; will-change:transform; -webkit-tap-highlight-color:transparent}
+.dragon{position:absolute; left:0; top:0; width:clamp(125px,22vmin,265px); padding:0; border:0; background:none; cursor:grab; pointer-events:auto; touch-action:none; user-select:none; -webkit-user-select:none; will-change:transform; -webkit-tap-highlight-color:transparent}
+.dragon.dragging{cursor:grabbing}
 .dragon:focus-visible{outline:2px solid var(--gold); outline-offset:4px; border-radius:12px}
 .spr{display:block; position:relative; width:100%; aspect-ratio:1383/1007}
 .spr i{position:absolute; inset:0; background:var(--spr) center/100% 100% no-repeat}
@@ -311,7 +312,7 @@ document.addEventListener("keydown",function(e){ if(e.key==="Escape" && body.cla
 // 🐉 DRAGÕEZINHOS ─────────────────────────────
 var FRASE = "Amabo te, in perpetuum et unum diem.";
 var FALAS = ["Hey Mommy…","Where\u2019s Daddy?","When will you two be together?"];
-var ZONAS = [[0,.2,.2,.95],[.8,1,.1,.8],[.3,.7,.55,1]];   // x0,x1,y0,y1 (fração do espaço livre): esquerda, direita, centro
+var ZONAS = [[0,.04,.12,.9],[.96,1,.1,.8],[.2,.8,.9,1]];   // x0,x1,y0,y1 (fração do espaço livre): extremo esquerdo, extremo direito, extremo de baixo
 var FOGO = ["#fff6d0","#ffc84a","#ff6a1a"];
 var GL = ["#ffffff","#ffd9f1","#d9f0ff","#d9fff2","#ffe9b0"];
 var MOUTH=[0.6826,0.3327], HEAD=0.6312;
@@ -327,7 +328,33 @@ var ds=[0,1,2].map(function(i){
   el.innerHTML='<span class="spr"><i class="L"></i><i class="R"></i><i class="B"></i></span>'; layer.appendChild(el);
   var bub=document.createElement("div"); bub.className="bub"; layer.appendChild(bub);
   var d={el:el,bub:bub,i:i,x:0,y:0,vx:0,vy:0,tx:0,ty:0,sp:rnd(28,50),ph:rnd(0,6),face:1,w:200,h:130};
-  el.addEventListener("click",gather); return d;
+  el.addEventListener("click",function(){ if(d.moved) return; gather(); });
+  // ✋ arrastar: só no voo livre e só depois de mexer ~8px (um toque/clique simples continua juntando os dragões)
+  var pid=null, sx=0, sy=0, ox=0, oy=0;
+  el.addEventListener("pointerdown",function(e){
+    if(state!=="fly" || (e.pointerType==="mouse" && e.button!==0) || pid!==null) return;
+    pid=e.pointerId; sx=e.clientX; sy=e.clientY; ox=e.clientX-d.x; oy=e.clientY-d.y; d.moved=false;
+    try{ el.setPointerCapture(pid); }catch(_){}
+  });
+  el.addEventListener("pointermove",function(e){
+    if(e.pointerId!==pid) return;
+    if(state!=="fly"){ endDrag(); return; }
+    if(!d.dragging){ if(Math.hypot(e.clientX-sx,e.clientY-sy)<8) return; d.dragging=true; d.moved=true; d.vx=d.vy=0; el.classList.add("dragging");
+      if(d.landed){ d.landed=false; el.classList.remove("perched"); } }
+    var nx=Math.max(-d.w*.2,Math.min(W-d.w*.8,e.clientX-ox)), ny=Math.max(0,Math.min(H-d.h*.6,e.clientY-oy));
+    if(Math.abs(nx-d.x)>1.5) d.face=nx>d.x?1:-1;
+    d.x=nx; d.y=ny;
+  });
+  function endDrag(){
+    if(pid===null) return;
+    try{ el.releasePointerCapture(pid); }catch(_){}
+    pid=null; el.classList.remove("dragging");
+    if(d.dragging){ d.dragging=false; d.vx=d.vy=0; if(state==="fly" && !d.perch) pick(d); setTimeout(function(){ d.moved=false; },60); }
+  }
+  d.endDrag=endDrag;
+  el.addEventListener("pointerup",endDrag); el.addEventListener("pointercancel",endDrag);
+  el.addEventListener("lostpointercapture",endDrag);
+  return d;
 });
 function measure(d){ d.w=d.el.offsetWidth||200; d.h=d.el.offsetHeight||130; }
 function pick(d){
@@ -383,7 +410,7 @@ function runCycle(){
 }
 schedule(rnd(4,9));
 
-var state="fly", tS=0, particles=[], px=W/2, py=H*.6, last=performance.now(), letters=[], shown=0;
+var gatherAt=0, state="fly", tS=0, particles=[], px=W/2, py=H*.6, last=performance.now(), letters=[], shown=0;
 
 function buildPhrase(){
   phraseEl.innerHTML=""; letters=[];
@@ -396,8 +423,8 @@ function buildPhrase(){
 function gather(){
   if(state!=="fly") return;
   cyc++; hideBubs(); clearTimeout(tm);
-  ds.forEach(function(d){ d.perch=false; d.landed=false; d.el.classList.remove("perched"); });
-  state="gather"; tS=0; shown=0; buildPhrase(); phraseEl.classList.remove("gone","show");
+  ds.forEach(function(d){ d.perch=false; d.landed=false; d.el.classList.remove("perched"); if(d.dragging){ d.dragging=false; d.moved=false; d.el.classList.remove("dragging"); } });
+  gatherAt=performance.now(); state="gather"; tS=0; shown=0; buildPhrase(); phraseEl.classList.remove("gone","show");
   document.body.classList.add("spell");
   measure(ds[0]); var w=ds[0].w, gap=Math.min(w*.95,W/3), cxm=W/2-w/2, y=Math.max(H*.14,70);
   [-1,0,1].forEach(function(k,i){ ds[i].tx=cxm+k*gap; ds[i].ty=y+(k===0?-w*.08:0); });
@@ -407,25 +434,38 @@ function release(){
   state="fly"; schedule(rnd(8,16)); document.body.classList.remove("spell");
   ds.forEach(function(d){ d.vx=0; d.vy=0; pick(d); });
 }
+// 👆 clicar na tela de novo durante a cena: a frase some e os dragões voltam a voar
+function endSpell(){
+  if(state!=="gather" && state!=="fire" && state!=="hold") return;
+  state="end"; tS=0; phraseEl.classList.add("gone"); document.body.classList.remove("spell");
+}
+document.addEventListener("click",function(e){
+  if(performance.now()-gatherAt<700) return;
+  var t=e.target; if(t&&t.closest&&t.closest("#hot,#mctl,#close,#lyr,#ltab")) return;
+  endSpell();
+});
 function emit(d,dt){
   var w=d.w, mx=d.x+w*(d.face>0?MOUTH[0]:1-MOUTH[0]), my=d.y+d.h*MOUTH[1]+Math.sin(d.t)*7;
   var n=Math.round(150*dt), dist=Math.hypot(px-mx,py-my);
   for(var i=0;i<n;i++){
     var a=Math.atan2(py-my,px-mx)+rnd(-.28,.28), sp=dist/.62*rnd(.7,1.15);
-    particles.push({x:mx,y:my,vx:Math.cos(a)*sp,vy:Math.sin(a)*sp,l:0,m:rnd(.5,.85),r:rnd(w*.03,w*.075),f:FOGO});
+    particles.push({x:mx,y:my,vx:Math.cos(a)*sp,vy:Math.sin(a)*sp,l:0,m:rnd(.5,.85),s:rnd(w*.009,w*.022),c:GL[(Math.random()*GL.length)|0],tw:rnd(0,6),star:Math.random()<.6});
   }
 }
 function drawFire(dt){
   cx.clearRect(0,0,W,H); cx.globalCompositeOperation="lighter";
   for(var i=particles.length-1;i>=0;i--){
     var p=particles[i]; p.l+=dt; if(p.l>=p.m){ particles.splice(i,1); continue; }
-    var t=p.l/p.m; p.x+=p.vx*dt; p.y+=p.vy*dt-40*dt; p.vx*=.985; p.vy*=.985;
-    cx.globalAlpha=(1-t)*.75; cx.fillStyle=t<.3?p.f[0]:t<.65?p.f[1]:p.f[2];
-    cx.beginPath(); cx.arc(p.x,p.y,p.r*(1-t*.55),0,6.283); cx.fill();
+    var t=p.l/p.m; p.x+=p.vx*dt; p.y+=p.vy*dt; p.vx*=.985; p.vy*=.985; p.tw+=dt*14;
+    cx.globalAlpha=Math.min(1,(1-t)*1.5)*(.55+.45*Math.sin(p.tw)); cx.fillStyle=p.c;
+    var s=p.s*(1-t*.35), x=p.x, y=p.y;
+    cx.beginPath();
+    if(p.star){ s*=1.6; cx.moveTo(x,y-s*2); cx.lineTo(x+s*.45,y-s*.45); cx.lineTo(x+s*2,y); cx.lineTo(x+s*.45,y+s*.45); cx.lineTo(x,y+s*2); cx.lineTo(x-s*.45,y+s*.45); cx.lineTo(x-s*2,y); cx.lineTo(x-s*.45,y-s*.45); cx.closePath(); }
+    else cx.arc(x,y,s*.7,0,6.283);
+    cx.fill();
   }
   cx.globalAlpha=1; cx.globalCompositeOperation="source-over";
 }
-
 var ANC=[[.27,.36],[.8,.38],[.58,.62],[.2,.2],[.88,.2]];
 function sparkle(d,dt){
   var n=(state==="fly"?55:90)*dt;
@@ -451,7 +491,9 @@ function frame2(now){
   var dt=Math.min(.05,(now-last)/1000); last=now; tS+=dt;
   ds.forEach(function(d){
     d.t=(d.t||d.ph)+dt*3; measure(d);
-    if(state==="fly" && d.perch){
+    if(state==="fly" && d.dragging){
+      d.vx=d.vy=0;
+    } else if(state==="fly" && d.perch){
       var hr=hot.getBoundingClientRect(), fx=d.face>0?FEET[0]:1-FEET[0];
       d.tx=Math.max(-d.w*.2,Math.min(W-d.w*.8,hr.left+hr.width*.5-d.w*fx)); d.ty=hr.top-d.h*FEET[1]+6;
       var px2=d.tx-d.x, py2=d.ty-d.y, ds2=Math.hypot(px2,py2)||1;
